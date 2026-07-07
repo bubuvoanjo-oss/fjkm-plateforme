@@ -1,0 +1,1102 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FJKM Ambohitantely — Plateforme de dons & annuaire professionnel</title>
+<meta name="description" content="Plateforme de collecte de dons et annuaire professionnel solidaire de l'église FJKM Ambohitantely.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 64 64%27%3E%3Crect width=%2764%27 height=%2764%27 rx=%2712%27 fill=%27%2316386B%27/%3E%3Cpath d=%27M28 12h8v14h14v8H36v18h-8V34H14v-8h14z%27 fill=%27%23C9962E%27/%3E%3C/svg%3E">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<style>body{margin:0}</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel" data-presets="react">
+const { useState, useMemo, useEffect } = React;
+
+/* ====== CONFIGURATION SUPABASE — à remplir ======
+   Supabase > votre projet > Settings > API */
+const SUPABASE_URL = "sb_publishable_wYEdwchGyw-yRL3C1m-gdA_X9gsRhX_";      // ex : https://abcdefgh.supabase.co
+const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImVhd3d5ZGljc2hhZ2pkd25yYnZ5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODM0MzM3ODEsImV4cCI6MjA5OTAwOTc4MX0.KJyeqaplDvTXZW1FrvEsiESd8NqWuvd-hl0n0FLvF_4";     // anon / public key
+/* ================================================= */
+
+const sb = (SUPABASE_URL.startsWith("https") && window.supabase)
+  ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
+  : null;
+
+const fmtDate = (iso) => {
+  try {
+    return new Date(iso).toLocaleDateString("fr-FR", { day: "numeric", month: "long", year: "numeric" });
+  } catch { return ""; }
+};
+const rowToDon = (r) => ({ ...r, allocation: r.allocation || [], date: fmtDate(r.created_at) });
+const rowToOffre = (r) => ({ ...r, desc: r.descr, note: Number(r.note) });
+
+/* ============================================================
+   FJKM Ambohitantely — Plateforme de dons & annuaire professionnel
+   Cahier des charges du 27 avril 2026
+   ============================================================ */
+
+const FRAIS_ADMIN = 0.125; // 12,5 % frais de gestion plateforme
+const FRAIS_FOIBE = 0.025; // 2,5 % contribution Foibe FJKM
+
+const MINISTERES = [
+  { id: "pasteur", nom: "Pasteur", annee: 1998, mission: "Accompagnement spirituel, prédication et vie pastorale de la paroisse.", couleur: "#16386B" },
+  { id: "sekoly", nom: "Sekoly Alahady", annee: 2001, mission: "École du dimanche : éducation biblique des enfants de la paroisse.", couleur: "#C9962E" },
+  { id: "tanora", nom: "Tanora Kristianina", annee: 2003, mission: "Mouvement des jeunes chrétiens : formation, chorale et activités.", couleur: "#2E7D52" },
+  { id: "lehilahy", nom: "Lehilahy Kristianina", annee: 2005, mission: "Association des hommes chrétiens : entraide et projets paroissiaux.", couleur: "#7A4E9E" },
+  { id: "vfl", nom: "VFL", annee: 2007, mission: "Vehivavy FJKM : association des femmes, action sociale et solidarité.", couleur: "#B5443C" },
+  { id: "dorkasy", nom: "Dorkasy", annee: 2010, mission: "Œuvres de charité : soutien aux familles vulnérables de la communauté.", couleur: "#2E6E8E" },
+];
+
+const CATEGORIES_NATURE = [
+  "Terrains", "Constructions", "Installations techniques", "Matériels et outillages",
+  "Matériels de transport", "Matériels de bureau et informatique", "Mobilier",
+  "Fournitures", "Consommables", "Produit de ferme", "Produit agricole",
+];
+
+const CATEGORIES_SERVICE = [
+  "Formation / Éducation", "Santé / Assistance sociale", "Construction / Métallique et bois",
+  "Artisanat / Design / Décoration", "Transport / Logistique", "Location / Hébergement",
+  "Services professionnels", "Restauration et hôtellerie", "Réparation / Garage", "Autres",
+];
+
+const STATUTS = {
+  attente: { label: "En attente de validation", bg: "#FBEFD9", fg: "#8A6212" },
+  valide: { label: "Validé", bg: "#DDEBE2", fg: "#2E7D52" },
+  disponible: { label: "Disponible", bg: "#DCE8F5", fg: "#16386B" },
+  reserve: { label: "Réservé", bg: "#EBE0F5", fg: "#7A4E9E" },
+  attribue: { label: "Attribué / Réalisé", bg: "#EEE9E0", fg: "#6B5E45" },
+};
+
+const DONS_INIT = [
+  {
+    id: 1, type: "nature", titre: "20 chaises en bois massif", categorie: "Mobilier",
+    description: "Chaises artisanales en palissandre, très bon état, idéales pour la salle paroissiale.",
+    prix: 800000, statut: "disponible", donateur: "Rakoto Jean",
+    allocation: [{ min: "sekoly", pct: 60 }, { min: "dorkasy", pct: 40 }], date: "28 juin 2026",
+  },
+  {
+    id: 2, type: "service", titre: "Formation bureautique (10 séances)", categorie: "Formation / Éducation",
+    description: "Cycle de formation Word / Excel pour 15 personnes, en présentiel à la paroisse.",
+    prix: 600000, statut: "disponible", donateur: "Rasoa Miora",
+    allocation: [{ min: "tanora", pct: 100 }], date: "30 juin 2026",
+  },
+  {
+    id: 3, type: "nature", titre: "10 sacs de ciment 50 kg", categorie: "Constructions",
+    description: "Ciment CEM I neuf pour les travaux de rénovation du bâtiment annexe.",
+    prix: 350000, statut: "attente", donateur: "Andry Nirina",
+    allocation: [{ min: "pasteur", pct: 100 }], date: "4 juillet 2026",
+  },
+  {
+    id: 4, type: "numeraire", titre: "Don en numéraire — Mobile Money", categorie: "Numéraire",
+    description: "Contribution mensuelle depuis la France.",
+    prix: 500000, statut: "attribue", donateur: "Hery R. (diaspora)",
+    allocation: [{ min: "vfl", pct: 50 }, { min: "dorkasy", pct: 50 }], date: "15 juin 2026",
+  },
+  {
+    id: 5, type: "nature", titre: "Ordinateur portable HP", categorie: "Matériels de bureau et informatique",
+    description: "PC portable i5 / 8 Go, reconditionné, pour le secrétariat de l'église.",
+    prix: 900000, statut: "reserve", donateur: "Tiana Rabe",
+    allocation: [{ min: "sekoly", pct: 100 }], date: "22 juin 2026",
+  },
+  {
+    id: 6, type: "service", titre: "Consultation médicale gratuite", categorie: "Santé / Assistance sociale",
+    description: "Journée de consultations gratuites pour les familles de la paroisse (solidarité).",
+    prix: 0, statut: "valide", donateur: "Dr Voahangy",
+    allocation: [], date: "1 juillet 2026",
+  },
+];
+
+const OFFRES_INIT = [
+  {
+    id: 1, nom: "Naly Randria", domaine: "Menuiserie & ouvrage bois", type: "service",
+    categorie: "Construction / Métallique et bois", loc: "Antananarivo — Antehiroka",
+    titre: "Fabrication de mobilier sur mesure", prix: 450000, unite: "à partir de",
+    desc: "Tables, bancs, portes isoplanes et placards. 12 ans d'expérience, devis gratuit.",
+    note: 4.8, avis: 23, valide: true, recommande: true, gratuit: false, statut: "actif",
+  },
+  {
+    id: 2, nom: "Fara Raharisoa", domaine: "Couture & stylisme", type: "bien",
+    categorie: "Artisanat / Design / Décoration", loc: "Antananarivo — Ambohijanahary",
+    titre: "Lamba et tenues de cérémonie", prix: 120000, unite: "à partir de",
+    desc: "Confection de lamba brodés et tenues pour cultes, mariages et fêtes paroissiales.",
+    note: 4.6, avis: 17, valide: true, recommande: false, gratuit: false, statut: "actif",
+  },
+  {
+    id: 3, nom: "Mamy Andriamasy", domaine: "Comptabilité & fiscalité", type: "service",
+    categorie: "Services professionnels", loc: "En ligne / Antananarivo",
+    titre: "Tenue comptable pour petites activités", prix: 200000, unite: "par mois",
+    desc: "Comptabilité, déclarations et conseil pour commerçants et artisans membres.",
+    note: 4.9, avis: 31, valide: true, recommande: true, gratuit: false, statut: "actif",
+  },
+  {
+    id: 4, nom: "Lova Rakotomalala", domaine: "Soutien scolaire", type: "service",
+    categorie: "Formation / Éducation", loc: "Antananarivo — Ivato",
+    titre: "Cours de maths et physique (collège / lycée)", prix: 0, unite: "",
+    desc: "Accompagnement gratuit des élèves de la paroisse, chaque samedi après-midi.",
+    note: 5.0, avis: 12, valide: true, recommande: false, gratuit: true, statut: "actif",
+  },
+  {
+    id: 5, nom: "Solo Ranaivo", domaine: "Transport & logistique", type: "service",
+    categorie: "Transport / Logistique", loc: "Antananarivo et périphérie",
+    titre: "Livraison et déménagement (camionnette)", prix: 80000, unite: "par course",
+    desc: "Transport de marchandises, dons en nature et déménagements dans tout Tana.",
+    note: 4.3, avis: 9, valide: false, recommande: false, gratuit: false, statut: "actif",
+  },
+];
+
+const fmtAr = (n) =>
+  n === 0 ? "Gratuit" : n.toLocaleString("fr-FR").replace(/\u202f/g, " ") + " Ar";
+
+const minNom = (id) => MINISTERES.find((m) => m.id === id)?.nom || id;
+const minCouleur = (id) => MINISTERES.find((m) => m.id === id)?.couleur || "#999";
+
+/* ---------- Petits composants ---------- */
+
+function Badge({ statut }) {
+  const s = STATUTS[statut];
+  if (!s) return null;
+  return (
+    <span className="badge" style={{ background: s.bg, color: s.fg }}>
+      {s.label}
+    </span>
+  );
+}
+
+function Stars({ note }) {
+  return (
+    <span className="stars" aria-label={`Note ${note} sur 5`}>
+      {[1, 2, 3, 4, 5].map((i) => (
+        <span key={i} style={{ opacity: i <= Math.round(note) ? 1 : 0.25 }}>★</span>
+      ))}
+      <span className="stars-num">{note.toFixed(1)}</span>
+    </span>
+  );
+}
+
+/* Bande d'allocation — élément signature : la transparence rendue visible */
+function AllocationBar({ montant, allocation, compact }) {
+  if (!montant) return null;
+  const fraisA = montant * FRAIS_ADMIN;
+  const fraisF = montant * FRAIS_FOIBE;
+  const net = montant - fraisA - fraisF;
+  const segs = [
+    { label: "Frais plateforme 12,5 %", val: fraisA, color: "#8C8577" },
+    { label: "Foibe FJKM 2,5 %", val: fraisF, color: "#BFB49B" },
+    ...(allocation.length
+      ? allocation.map((a) => ({
+          label: `${minNom(a.min)} ${a.pct} %`,
+          val: (net * a.pct) / 100,
+          color: minCouleur(a.min),
+        }))
+      : [{ label: "Affectation libre (net)", val: net, color: "#16386B" }]),
+  ];
+  return (
+    <div className="alloc">
+      <div className="alloc-bar" role="img" aria-label="Répartition du don">
+        {segs.map((s, i) => (
+          <div key={i} className="alloc-seg" style={{ width: `${(s.val / montant) * 100}%`, background: s.color }} title={`${s.label} — ${fmtAr(Math.round(s.val))}`} />
+        ))}
+      </div>
+      {!compact && (
+        <div className="alloc-legend">
+          {segs.map((s, i) => (
+            <span key={i}>
+              <i style={{ background: s.color }} /> {s.label} · {fmtAr(Math.round(s.val))}
+            </span>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ---------- Pages ---------- */
+
+function Accueil({ dons, go }) {
+  const total = dons.filter((d) => d.statut !== "attente").reduce((s, d) => s + d.prix, 0);
+  const nb = dons.length;
+  return (
+    <div>
+      <section className="hero">
+        <div className="hero-inner">
+          <p className="eyebrow">FJKM Ambohitantely · Plateforme paroissiale</p>
+          <h1>
+            Chaque don, <em>tracé</em>.<br />
+            Chaque talent, <em>partagé</em>.
+          </h1>
+          <p className="hero-sub">
+            Dons en numéraire, en nature et en services au profit des ministères de
+            l'église — et un annuaire professionnel solidaire pour valoriser les
+            compétences des fidèles, à Madagascar comme dans la diaspora.
+          </p>
+          <div className="hero-actions">
+            <button className="btn btn-gold" onClick={() => go("dons", { tab: "faire" })}>Faire un don</button>
+            <button className="btn btn-ghost" onClick={() => go("annuaire")}>Découvrir l'annuaire</button>
+          </div>
+        </div>
+        <div className="hero-stats">
+          <div><strong>{fmtAr(total)}</strong><span>collectés et valorisés</span></div>
+          <div><strong>{nb}</strong><span>dons enregistrés</span></div>
+          <div><strong>{MINISTERES.length}</strong><span>ministères soutenus</span></div>
+        </div>
+      </section>
+
+      <section className="section">
+        <h2 className="section-title">La transparence, visible à chaque étape</h2>
+        <p className="section-sub">
+          Sur chaque transaction, <strong>12,5 %</strong> financent la gestion de la
+          plateforme et <strong>2,5 %</strong> sont reversés au Foibe FJKM. Le montant
+          net est réparti selon votre choix, en pourcentage ou en montant fixe.
+        </p>
+        <div className="card demo-card">
+          <p className="demo-label">Exemple : un don de 100 000 Ar réparti entre deux ministères</p>
+          <AllocationBar montant={100000} allocation={[{ min: "sekoly", pct: 60 }, { min: "dorkasy", pct: 40 }]} />
+        </div>
+      </section>
+
+      <section className="section">
+        <h2 className="section-title">Trois manières de contribuer</h2>
+        <div className="grid3">
+          <div className="card way" onClick={() => go("dons", { tab: "faire", type: "numeraire" })}>
+            <span className="way-ico">💠</span>
+            <h3>En numéraire</h3>
+            <p>Mobile Money, virement, carte ou espèces — depuis Madagascar ou l'étranger.</p>
+          </div>
+          <div className="card way" onClick={() => go("dons", { tab: "faire", type: "nature" })}>
+            <span className="way-ico">📦</span>
+            <h3>En nature</h3>
+            <p>Mobilier, matériaux, fournitures, produits agricoles… valorisés puis attribués.</p>
+          </div>
+          <div className="card way" onClick={() => go("dons", { tab: "faire", type: "service" })}>
+            <span className="way-ico">🤝</span>
+            <h3>En services</h3>
+            <p>Une prestation dont le revenu est directement alloué aux ministères.</p>
+          </div>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function Ministeres({ go }) {
+  return (
+    <div className="section">
+      <h2 className="section-title">Les ministères de la paroisse</h2>
+      <p className="section-sub">
+        Chaque don peut être affecté à un ou plusieurs ministères, en pourcentage ou en
+        montant fixe.
+      </p>
+      <div className="grid3">
+        {MINISTERES.map((m) => (
+          <div key={m.id} className="card ministere">
+            <div className="min-band" style={{ background: m.couleur }} />
+            <div className="min-body">
+              <h3>{m.nom}</h3>
+              <p className="min-annee">Depuis {m.annee}</p>
+              <p>{m.mission}</p>
+              <button className="btn btn-blue" onClick={() => go("dons", { tab: "faire", type: "numeraire", min: m.id })}>
+                Soutenir ce ministère
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/* ---------- Formulaire de don (multi-étapes) ---------- */
+
+function DonForm({ preset, onSubmit }) {
+  const [step, setStep] = useState(1);
+  const [type, setType] = useState(preset?.type || "numeraire");
+  const [titre, setTitre] = useState("");
+  const [categorie, setCategorie] = useState("");
+  const [description, setDescription] = useState("");
+  const [photos, setPhotos] = useState(0);
+  const [prix, setPrix] = useState(preset?.type === "numeraire" ? 50000 : 100000);
+  const [alloc, setAlloc] = useState(
+    preset?.min ? [{ min: preset.min, pct: 100 }] : [{ min: "pasteur", pct: 100 }]
+  );
+  const [done, setDone] = useState(false);
+
+  const steps = ["Type", "Description", "Prix", "Allocation", "Récapitulatif"];
+  const totalPct = alloc.reduce((s, a) => s + Number(a.pct || 0), 0);
+  const cats = type === "nature" ? CATEGORIES_NATURE : CATEGORIES_SERVICE;
+
+  const setAllocAt = (i, field, val) => {
+    const next = alloc.map((a, j) => (j === i ? { ...a, [field]: val } : a));
+    setAlloc(next);
+  };
+
+  const canNext =
+    step === 1 ? !!type :
+    step === 2 ? (type === "numeraire" || (titre.trim() && categorie)) :
+    step === 3 ? prix > 0 :
+    step === 4 ? totalPct === 100 && alloc.every((a) => a.min) :
+    true;
+
+  if (done) {
+    return (
+      <div className="card form-card center">
+        <span className="way-ico">🕊️</span>
+        <h3>Misaotra betsaka !</h3>
+        <p>
+          Votre {type === "numeraire" ? "don" : type === "nature" ? "don en nature" : "don de service"} a
+          été soumis. Il est <strong>en attente de validation</strong> par
+          l'administration : vérification, ajustement éventuel du prix, puis publication.
+        </p>
+        <AllocationBar montant={Number(prix)} allocation={alloc} />
+        <button className="btn btn-blue" onClick={() => { setDone(false); setStep(1); setTitre(""); setDescription(""); setPhotos(0); }}>
+          Soumettre un autre don
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="card form-card">
+      {/* Barre de progression */}
+      <div className="progress">
+        {steps.map((s, i) => (
+          <div key={s} className={`progress-step ${i + 1 <= step ? "on" : ""}`}>
+            <span className="dot">{i + 1}</span>
+            <span className="lbl">{s}</span>
+          </div>
+        ))}
+      </div>
+
+      {step === 1 && (
+        <div>
+          <h3>Que souhaitez-vous donner ?</h3>
+          <div className="type-row">
+            {[
+              { id: "numeraire", t: "Numéraire", d: "Mobile Money, virement, carte, espèces" },
+              { id: "nature", t: "En nature", d: "Bien matériel, valorisé puis attribué" },
+              { id: "service", t: "Service", d: "Prestation dont le revenu va aux ministères" },
+            ].map((o) => (
+              <button key={o.id} className={`type-opt ${type === o.id ? "sel" : ""}`} onClick={() => { setType(o.id); setCategorie(""); }}>
+                <strong>{o.t}</strong>
+                <span>{o.d}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {step === 2 && (
+        <div>
+          {type === "numeraire" ? (
+            <div>
+              <h3>Votre contribution</h3>
+              <label className="field">
+                <span>Message (facultatif)</span>
+                <input value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Ex. : contribution mensuelle" />
+              </label>
+              <label className="field">
+                <span>Moyen de paiement</span>
+                <select value={categorie} onChange={(e) => setCategorie(e.target.value)}>
+                  <option value="">Choisir…</option>
+                  <option>Mobile Money (MVola / Orange / Airtel)</option>
+                  <option>Virement bancaire</option>
+                  <option>Carte Visa / Mastercard</option>
+                  <option>Espèces (au bureau paroissial)</option>
+                </select>
+              </label>
+            </div>
+          ) : (
+            <div>
+              <h3>Décrivez votre {type === "nature" ? "bien" : "service"}</h3>
+              <label className="field">
+                <span>Titre</span>
+                <input value={titre} onChange={(e) => setTitre(e.target.value)} placeholder={type === "nature" ? "Ex. : 20 chaises en bois" : "Ex. : Formation bureautique"} />
+              </label>
+              <label className="field">
+                <span>Catégorie</span>
+                <select value={categorie} onChange={(e) => setCategorie(e.target.value)}>
+                  <option value="">Choisir…</option>
+                  {cats.map((c) => <option key={c}>{c}</option>)}
+                </select>
+              </label>
+              <label className="field">
+                <span>Description détaillée</span>
+                <textarea rows={3} value={description} onChange={(e) => setDescription(e.target.value)} placeholder="État, quantité, conditions, modalités d'exécution…" />
+              </label>
+              <div className="field">
+                <span>Photos {type === "nature" ? "(recommandé)" : "(facultatif)"}</span>
+                <button className="btn btn-ghost small" onClick={() => setPhotos(photos + 1)}>
+                  + Ajouter une photo {photos > 0 && `(${photos} ajoutée${photos > 1 ? "s" : ""})`}
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {step === 3 && (
+        <div>
+          <h3>{type === "numeraire" ? "Montant du don" : "Prix proposé"}</h3>
+          <p className="hint">
+            {type === "numeraire"
+              ? "Le montant que vous souhaitez donner."
+              : "Le prix peut être fixé par vous, puis validé ou ajusté par le comité. Laissez 0 pour un don gratuit (solidarité)."}
+          </p>
+          <label className="field">
+            <span>Montant (Ariary)</span>
+            <input type="number" min="0" step="5000" value={prix} onChange={(e) => setPrix(e.target.value)} />
+          </label>
+          <div className="amount-row">
+            {[20000, 50000, 100000, 250000, 500000].map((v) => (
+              <button key={v} className="chip" onClick={() => setPrix(v)}>{fmtAr(v)}</button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {step === 4 && (
+        <div>
+          <h3>Allocation aux ministères</h3>
+          <p className="hint">
+            Répartissez le montant net (après 12,5 % de frais plateforme et 2,5 % pour le
+            Foibe FJKM) entre un ou plusieurs ministères.
+          </p>
+          {alloc.map((a, i) => (
+            <div key={i} className="alloc-row">
+              <select value={a.min} onChange={(e) => setAllocAt(i, "min", e.target.value)}>
+                {MINISTERES.map((m) => <option key={m.id} value={m.id}>{m.nom}</option>)}
+              </select>
+              <input type="number" min="0" max="100" value={a.pct} onChange={(e) => setAllocAt(i, "pct", e.target.value)} />
+              <span>%</span>
+              {alloc.length > 1 && (
+                <button className="btn-x" onClick={() => setAlloc(alloc.filter((_, j) => j !== i))} aria-label="Retirer">×</button>
+              )}
+            </div>
+          ))}
+          <div className="alloc-actions">
+            <button className="btn btn-ghost small" onClick={() => setAlloc([...alloc, { min: "dorkasy", pct: 0 }])}>
+              + Ajouter un ministère
+            </button>
+            <span className={`pct-total ${totalPct === 100 ? "ok" : "ko"}`}>Total : {totalPct} %</span>
+          </div>
+          {prix > 0 && totalPct === 100 && <AllocationBar montant={Number(prix)} allocation={alloc} />}
+        </div>
+      )}
+
+      {step === 5 && (
+        <div>
+          <h3>Récapitulatif</h3>
+          <div className="recap">
+            <div><span>Type</span><strong>{type === "numeraire" ? "Don en numéraire" : type === "nature" ? "Don en nature" : "Don de service"}</strong></div>
+            {titre && <div><span>Titre</span><strong>{titre}</strong></div>}
+            {categorie && <div><span>{type === "numeraire" ? "Paiement" : "Catégorie"}</span><strong>{categorie}</strong></div>}
+            <div><span>Montant</span><strong>{fmtAr(Number(prix))}</strong></div>
+            <div><span>Frais plateforme (12,5 %)</span><strong>− {fmtAr(Math.round(prix * FRAIS_ADMIN))}</strong></div>
+            <div><span>Foibe FJKM (2,5 %)</span><strong>− {fmtAr(Math.round(prix * FRAIS_FOIBE))}</strong></div>
+            <div className="recap-net"><span>Net alloué aux ministères</span><strong>{fmtAr(Math.round(prix * (1 - FRAIS_ADMIN - FRAIS_FOIBE)))}</strong></div>
+          </div>
+          <AllocationBar montant={Number(prix)} allocation={alloc} />
+        </div>
+      )}
+
+      <div className="form-nav">
+        {step > 1 && <button className="btn btn-ghost" onClick={() => setStep(step - 1)}>Retour</button>}
+        {step < 5 ? (
+          <button className="btn btn-blue" disabled={!canNext} onClick={() => setStep(step + 1)}>Continuer</button>
+        ) : (
+          <button
+            className="btn btn-gold"
+            onClick={() => {
+              onSubmit({
+                id: Date.now(), type,
+                titre: titre || (type === "numeraire" ? "Don en numéraire" : "Sans titre"),
+                categorie: categorie || "Numéraire", description,
+                prix: Number(prix), statut: "attente", donateur: "Vous",
+                allocation: alloc.map((a) => ({ min: a.min, pct: Number(a.pct) })),
+                date: "7 juillet 2026",
+              });
+              setDone(true);
+            }}
+          >
+            Soumettre le don
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function DonCard({ don, onReserver, role, onValider }) {
+  return (
+    <div className="card don-card">
+      <div className="don-head">
+        <span className="don-type">{don.type === "nature" ? "📦 En nature" : don.type === "service" ? "🤝 Service" : "💠 Numéraire"}</span>
+        <Badge statut={don.statut} />
+      </div>
+      <h3>{don.titre}</h3>
+      <p className="don-cat">{don.categorie} · {don.date} · par {don.donateur}</p>
+      <p className="don-desc">{don.description}</p>
+      <p className="don-prix">{fmtAr(don.prix)}</p>
+      {don.prix > 0 && <AllocationBar montant={don.prix} allocation={don.allocation} compact />}
+      <div className="don-actions">
+        {don.statut === "disponible" && (
+          <button className="btn btn-blue small" onClick={() => onReserver(don.id)}>Réserver</button>
+        )}
+        {role === "admin" && don.statut === "attente" && (
+          <>
+            <button className="btn btn-gold small" onClick={() => onValider(don.id, "disponible")}>Valider & publier</button>
+            <button className="btn btn-ghost small" onClick={() => onValider(don.id, "valide")}>Valider (prix ajusté)</button>
+          </>
+        )}
+        {role === "admin" && don.statut === "reserve" && (
+          <button className="btn btn-gold small" onClick={() => onValider(don.id, "attribue")}>Confirmer la remise</button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function Dons({ dons, setDons, role, preset }) {
+  const [tab, setTab] = useState(preset?.tab === "faire" ? "faire" : "liste");
+  const [filtre, setFiltre] = useState("tous");
+
+  const visibles = dons.filter((d) => {
+    if (filtre !== "tous" && d.type !== filtre) return false;
+    if (role !== "admin" && d.statut === "attente" && d.donateur !== "Vous") return false;
+    return true;
+  });
+
+  const majStatut = (id, statut) => {
+    setDons(dons.map((d) => (d.id === id ? { ...d, statut } : d)));
+    if (sb) sb.from("dons").update({ statut }).eq("id", id).then(({ error }) => error && console.error(error));
+  };
+  const reserver = (id) => majStatut(id, "reserve");
+  const valider = (id, statut) => majStatut(id, statut);
+
+  const ajouterDon = async (d) => {
+    if (sb) {
+      const { data, error } = await sb.from("dons").insert({
+        type: d.type, titre: d.titre, categorie: d.categorie, description: d.description,
+        prix: d.prix, statut: d.statut, donateur: d.donateur, allocation: d.allocation,
+      }).select().single();
+      if (!error && data) { setDons([rowToDon(data), ...dons]); return; }
+      if (error) console.error(error);
+    }
+    setDons([d, ...dons]);
+  };
+
+  return (
+    <div className="section">
+      <div className="tabs">
+        <button className={tab === "liste" ? "on" : ""} onClick={() => setTab("liste")}>Dons publiés</button>
+        <button className={tab === "faire" ? "on" : ""} onClick={() => setTab("faire")}>Faire un don</button>
+      </div>
+
+      {tab === "faire" ? (
+        <DonForm preset={preset} onSubmit={ajouterDon} />
+      ) : (
+        <div>
+          <div className="filter-row">
+            {[["tous", "Tous"], ["numeraire", "Numéraire"], ["nature", "En nature"], ["service", "Services"]].map(([v, l]) => (
+              <button key={v} className={`chip ${filtre === v ? "sel" : ""}`} onClick={() => setFiltre(v)}>{l}</button>
+            ))}
+          </div>
+          <div className="grid2">
+            {visibles.map((d) => (
+              <DonCard key={d.id} don={d} onReserver={reserver} role={role} onValider={valider} />
+            ))}
+          </div>
+          {visibles.length === 0 && <p className="empty">Aucun don dans cette catégorie pour le moment. Soyez le premier à contribuer.</p>}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ---------- Annuaire professionnel ---------- */
+
+function Annuaire({ offres, setOffres }) {
+  const [q, setQ] = useState("");
+  const [cat, setCat] = useState("toutes");
+  const [type, setType] = useState("tous");
+  const [gratuitSeul, setGratuitSeul] = useState(false);
+  const [demandes, setDemandes] = useState({}); // id -> statut
+
+  const visibles = offres.filter((o) => {
+    if (o.statut !== "actif") return false;
+    if (type !== "tous" && o.type !== type) return false;
+    if (cat !== "toutes" && o.categorie !== cat) return false;
+    if (gratuitSeul && !o.gratuit) return false;
+    const t = (o.nom + o.domaine + o.titre + o.loc + o.desc).toLowerCase();
+    return t.includes(q.toLowerCase());
+  });
+
+  const contacter = (id) => setDemandes({ ...demandes, [id]: "en attente" });
+  const noter = (id) => {
+    const o = offres.find((x) => x.id === id);
+    if (!o) return;
+    const maj = { avis: o.avis + 1, note: Math.min(5, +(o.note + (5 - o.note) * 0.1).toFixed(1)) };
+    setOffres(offres.map((x) => (x.id === id ? { ...x, ...maj } : x)));
+    if (sb) sb.from("offres").update(maj).eq("id", id).then(({ error }) => error && console.error(error));
+  };
+
+  const cats = [...new Set(offres.map((o) => o.categorie))];
+
+  return (
+    <div className="section">
+      <h2 className="section-title">Annuaire professionnel solidaire</h2>
+      <p className="section-sub">
+        Les fidèles proposent leurs biens et services — rémunérés (revenus propres) ou
+        gratuits, dans une logique d'entraide. Distinct des dons destinés aux ministères.
+      </p>
+
+      <div className="search-row">
+        <input className="search" placeholder="Rechercher un métier, un nom, un quartier…" value={q} onChange={(e) => setQ(e.target.value)} />
+        <select value={cat} onChange={(e) => setCat(e.target.value)}>
+          <option value="toutes">Toutes catégories</option>
+          {cats.map((c) => <option key={c}>{c}</option>)}
+        </select>
+        <select value={type} onChange={(e) => setType(e.target.value)}>
+          <option value="tous">Biens & services</option>
+          <option value="bien">Biens</option>
+          <option value="service">Services</option>
+        </select>
+        <label className="check">
+          <input type="checkbox" checked={gratuitSeul} onChange={(e) => setGratuitSeul(e.target.checked)} />
+          Solidarité (gratuit)
+        </label>
+      </div>
+
+      <div className="grid2">
+        {visibles.map((o) => (
+          <div key={o.id} className="card offre">
+            <div className="offre-head">
+              <div className="avatar" aria-hidden>{o.nom.split(" ").map((w) => w[0]).slice(0, 2).join("")}</div>
+              <div>
+                <h3>{o.nom}</h3>
+                <p className="offre-dom">{o.domaine} · {o.loc}</p>
+              </div>
+            </div>
+            <div className="offre-badges">
+              {o.valide && <span className="pill pill-blue">✓ Prestataire validé</span>}
+              {o.recommande && <span className="pill pill-gold">★ Offre recommandée</span>}
+              {o.gratuit && <span className="pill pill-green">Solidarité — gratuit</span>}
+            </div>
+            <h4>{o.titre}</h4>
+            <p className="don-desc">{o.desc}</p>
+            <div className="offre-foot">
+              <span className="don-prix">{o.gratuit ? "Gratuit" : `${o.unite ? o.unite + " " : ""}${fmtAr(o.prix)}`}</span>
+              <Stars note={o.note} />
+              <span className="avis">{o.avis} avis</span>
+            </div>
+            <div className="don-actions">
+              {demandes[o.id] ? (
+                <span className="pill pill-green">Demande envoyée — en attente de confirmation</span>
+              ) : (
+                <button className="btn btn-blue small" onClick={() => contacter(o.id)}>Contacter / réserver</button>
+              )}
+              <button className="btn btn-ghost small" onClick={() => noter(o.id)}>Évaluer</button>
+            </div>
+          </div>
+        ))}
+      </div>
+      {visibles.length === 0 && <p className="empty">Aucune offre ne correspond à votre recherche. Modifiez les filtres ou proposez la vôtre.</p>}
+    </div>
+  );
+}
+
+/* ---------- Tableau de bord (admin) ---------- */
+
+function Dashboard({ dons }) {
+  const finalises = dons.filter((d) => ["disponible", "reserve", "attribue", "valide"].includes(d.statut) && d.prix > 0);
+  const total = finalises.reduce((s, d) => s + d.prix, 0);
+  const fraisAdmin = Math.round(total * FRAIS_ADMIN);
+  const fraisFoibe = Math.round(total * FRAIS_FOIBE);
+  const net = total - fraisAdmin - fraisFoibe;
+
+  const parMinistere = useMemo(() => {
+    const map = {};
+    finalises.forEach((d) => {
+      const n = d.prix * (1 - FRAIS_ADMIN - FRAIS_FOIBE);
+      d.allocation.forEach((a) => { map[a.min] = (map[a.min] || 0) + (n * a.pct) / 100; });
+    });
+    return MINISTERES.map((m) => ({ ...m, montant: Math.round(map[m.id] || 0) }))
+      .sort((a, b) => b.montant - a.montant);
+  }, [dons]);
+
+  const parType = ["numeraire", "nature", "service"].map((t) => ({
+    t: t === "numeraire" ? "Numéraire" : t === "nature" ? "En nature" : "Services",
+    v: finalises.filter((d) => d.type === t).reduce((s, d) => s + d.prix, 0),
+  }));
+
+  const parDonateur = useMemo(() => {
+    const map = {};
+    finalises.forEach((d) => { map[d.donateur] = (map[d.donateur] || 0) + d.prix; });
+    return Object.entries(map).sort((a, b) => b[1] - a[1]).slice(0, 5);
+  }, [dons]);
+
+  const maxMin = Math.max(...parMinistere.map((m) => m.montant), 1);
+  const maxType = Math.max(...parType.map((x) => x.v), 1);
+  const attente = dons.filter((d) => d.statut === "attente").length;
+
+  return (
+    <div className="section">
+      <h2 className="section-title">Tableau de bord</h2>
+      <p className="section-sub">Gestion, suivi et transparence des flux de la plateforme.</p>
+
+      <div className="kpis">
+        <div className="kpi"><span>Total collecté et valorisé</span><strong>{fmtAr(total)}</strong></div>
+        <div className="kpi"><span>Frais plateforme (12,5 %)</span><strong>{fmtAr(fraisAdmin)}</strong></div>
+        <div className="kpi"><span>Contribution Foibe (2,5 %)</span><strong>{fmtAr(fraisFoibe)}</strong></div>
+        <div className="kpi kpi-gold"><span>Net alloué aux ministères</span><strong>{fmtAr(net)}</strong></div>
+      </div>
+
+      {attente > 0 && (
+        <div className="alert">
+          ⚠ {attente} don{attente > 1 ? "s" : ""} en attente de validation — rendez-vous dans l'onglet « Dons publiés » pour valider.
+        </div>
+      )}
+
+      <div className="grid2">
+        <div className="card chart-card">
+          <h3>Répartition par ministère (net)</h3>
+          {parMinistere.map((m) => (
+            <div key={m.id} className="hbar-row">
+              <span className="hbar-label">{m.nom}</span>
+              <div className="hbar-track">
+                <div className="hbar" style={{ width: `${(m.montant / maxMin) * 100}%`, background: m.couleur }} />
+              </div>
+              <span className="hbar-val">{fmtAr(m.montant)}</span>
+            </div>
+          ))}
+        </div>
+
+        <div className="card chart-card">
+          <h3>Répartition par type de don</h3>
+          {parType.map((x) => (
+            <div key={x.t} className="hbar-row">
+              <span className="hbar-label">{x.t}</span>
+              <div className="hbar-track">
+                <div className="hbar" style={{ width: `${(x.v / maxType) * 100}%`, background: "#16386B" }} />
+              </div>
+              <span className="hbar-val">{fmtAr(x.v)}</span>
+            </div>
+          ))}
+          <h3 style={{ marginTop: "1.4rem" }}>Principaux donateurs</h3>
+          {parDonateur.map(([nom, v]) => (
+            <div key={nom} className="hbar-row">
+              <span className="hbar-label">{nom}</span>
+              <div className="hbar-track">
+                <div className="hbar" style={{ width: `${(v / (parDonateur[0]?.[1] || 1)) * 100}%`, background: "#C9962E" }} />
+              </div>
+              <span className="hbar-val">{fmtAr(v)}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="card chart-card">
+        <h3>Historique des transactions</h3>
+        <table className="table">
+          <thead>
+            <tr><th>Date</th><th>Don</th><th>Type</th><th>Donateur</th><th>Montant</th><th>Statut</th></tr>
+          </thead>
+          <tbody>
+            {dons.map((d) => (
+              <tr key={d.id}>
+                <td>{d.date}</td>
+                <td>{d.titre}</td>
+                <td>{d.type === "numeraire" ? "Numéraire" : d.type === "nature" ? "Nature" : "Service"}</td>
+                <td>{d.donateur}</td>
+                <td>{fmtAr(d.prix)}</td>
+                <td><Badge statut={d.statut} /></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+/* ---------- Application ---------- */
+
+function App() {
+  const [page, setPage] = useState("accueil");
+  const [preset, setPreset] = useState(null);
+  const [role, setRole] = useState("fidele");
+  const [dons, setDons] = useState(DONS_INIT);
+  const [offres, setOffres] = useState(OFFRES_INIT);
+  const [connecte, setConnecte] = useState(false);
+
+  useEffect(() => {
+    if (!sb) return;
+    (async () => {
+      try {
+        const { data: d, error: e1 } = await sb.from("dons").select("*").order("id", { ascending: false });
+        const { data: o, error: e2 } = await sb.from("offres").select("*").order("id");
+        if (!e1 && d) setDons(d.map(rowToDon));
+        if (!e2 && o) setOffres(o.map(rowToOffre));
+        if (!e1 && !e2) setConnecte(true);
+      } catch (err) { console.error("Supabase:", err); }
+    })();
+  }, []);
+
+  const go = (p, pre = null) => { setPage(p); setPreset(pre); window.scrollTo(0, 0); };
+
+  const NAV = [
+    ["accueil", "Accueil"],
+    ["ministeres", "Ministères"],
+    ["dons", "Dons"],
+    ["annuaire", "Annuaire"],
+    ...(role === "admin" ? [["dashboard", "Tableau de bord"]] : []),
+  ];
+
+  return (
+    <div className="app">
+      <style>{CSS}</style>
+      <header className="topbar">
+        <div className="brand" onClick={() => go("accueil")}>
+          <span className="brand-mark">✚</span>
+          <span>
+            <strong>FJKM Ambohitantely</strong>
+            <em>Fanomezana & Annuaire solidaire</em>
+          </span>
+        </div>
+        <nav className="nav">
+          {NAV.map(([p, l]) => (
+            <button key={p} className={page === p ? "on" : ""} onClick={() => go(p)}>{l}</button>
+          ))}
+        </nav>
+        <div className="role">
+          <span>Connecté :</span>
+          <select value={role} onChange={(e) => { setRole(e.target.value); if (e.target.value !== "admin" && page === "dashboard") go("accueil"); }}>
+            <option value="fidele">Fidèle (compte vérifié)</option>
+            <option value="admin">Administrateur</option>
+          </select>
+        </div>
+      </header>
+
+      <main>
+        {page === "accueil" && <Accueil dons={dons} go={go} />}
+        {page === "ministeres" && <Ministeres go={go} />}
+        {page === "dons" && <Dons dons={dons} setDons={setDons} role={role} preset={preset} />}
+        {page === "annuaire" && <Annuaire offres={offres} setOffres={setOffres} />}
+        {page === "dashboard" && role === "admin" && <Dashboard dons={dons} />}
+      </main>
+
+      <footer className="footer">
+        <p>
+          <strong>FJKM Ambohitantely</strong> — Plateforme de dons et annuaire
+          professionnel solidaire. Accès réservé aux fidèles validés par
+          l'administration. Sur chaque transaction : 12,5 % de frais de gestion et
+          2,5 % reversés au Foibe FJKM, affichés en toute transparence.
+        </p>
+        <p style={{ marginTop: ".6rem", fontSize: ".74rem", opacity: 0.75 }}>
+          {connecte ? "🟢 Base de données connectée — les dons sont enregistrés en temps réel" : "🟡 Mode démonstration — données locales (Supabase non configuré)"}
+          {" · "}Conception & développement : Ramandrosoa Lalaina · 2026
+        </p>
+      </footer>
+    </div>
+  );
+}
+
+/* ---------- Styles ---------- */
+
+const CSS = `
+@import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&family=Archivo:wght@400;500;600;700&display=swap');
+
+:root{
+  --bleu:#16386B; --bleu-fonce:#0E2547; --or:#C9962E; --or-clair:#E9D9B4;
+  --ivoire:#FAF7F0; --papier:#FFFFFF; --encre:#22273A; --gris:#6B7185;
+  --vert:#2E7D52; --rouge:#B5443C; --trait:#E4DFD3;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+.app{font-family:'Archivo',system-ui,sans-serif;color:var(--encre);background:var(--ivoire);min-height:100vh;display:flex;flex-direction:column}
+h1,h2,h3,h4{font-family:'Fraunces',serif;color:var(--bleu-fonce)}
+main{flex:1}
+button{font-family:inherit;cursor:pointer}
+input,select,textarea{font-family:inherit;font-size:.95rem;padding:.55rem .7rem;border:1px solid var(--trait);border-radius:8px;background:#fff;color:var(--encre);width:100%}
+input:focus,select:focus,textarea:focus,button:focus-visible{outline:2px solid var(--or);outline-offset:1px}
+
+/* Topbar */
+.topbar{display:flex;align-items:center;gap:1.2rem;flex-wrap:wrap;padding:.8rem 1.4rem;background:var(--bleu);color:#fff;position:sticky;top:0;z-index:10}
+.brand{display:flex;align-items:center;gap:.6rem;cursor:pointer}
+.brand-mark{display:grid;place-items:center;width:38px;height:38px;border-radius:9px;background:var(--or);color:var(--bleu-fonce);font-size:1.2rem;font-weight:700}
+.brand strong{display:block;font-family:'Fraunces',serif;font-size:1.05rem;line-height:1.1;color:#fff}
+.brand em{display:block;font-size:.72rem;font-style:normal;color:#C7D3E8;letter-spacing:.04em}
+.nav{display:flex;gap:.2rem;flex-wrap:wrap;margin-left:auto}
+.nav button{background:none;border:none;color:#C7D3E8;padding:.5rem .8rem;border-radius:8px;font-size:.92rem;font-weight:500}
+.nav button.on,.nav button:hover{background:rgba(255,255,255,.12);color:#fff}
+.role{display:flex;align-items:center;gap:.5rem;font-size:.8rem;color:#C7D3E8}
+.role select{width:auto;background:var(--bleu-fonce);color:#fff;border-color:rgba(255,255,255,.25);font-size:.8rem;padding:.35rem .5rem}
+
+/* Hero */
+.hero{background:linear-gradient(160deg,var(--bleu) 0%,var(--bleu-fonce) 70%);color:#fff;padding:3.2rem 1.4rem 0}
+.hero-inner{max-width:860px;margin:0 auto;text-align:center}
+.eyebrow{font-size:.78rem;letter-spacing:.14em;text-transform:uppercase;color:var(--or-clair);margin-bottom:1rem}
+.hero h1{font-size:clamp(2rem,5vw,3.2rem);color:#fff;line-height:1.12;font-weight:600}
+.hero h1 em{font-style:italic;color:var(--or-clair)}
+.hero-sub{max-width:640px;margin:1.1rem auto 1.6rem;color:#C7D3E8;line-height:1.55}
+.hero-actions{display:flex;gap:.8rem;justify-content:center;flex-wrap:wrap}
+.hero-stats{max-width:860px;margin:2.4rem auto 0;display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:rgba(255,255,255,.15);border-radius:14px 14px 0 0;overflow:hidden}
+.hero-stats>div{background:rgba(255,255,255,.06);padding:1.1rem;text-align:center}
+.hero-stats strong{display:block;font-family:'Fraunces',serif;font-size:1.35rem;color:var(--or-clair)}
+.hero-stats span{font-size:.78rem;color:#C7D3E8}
+
+/* Sections & cards */
+.section{max-width:1020px;margin:0 auto;padding:2.6rem 1.4rem}
+.section-title{font-size:1.7rem;margin-bottom:.5rem}
+.section-sub{color:var(--gris);max-width:680px;margin-bottom:1.6rem;line-height:1.55}
+.card{background:var(--papier);border:1px solid var(--trait);border-radius:14px;padding:1.2rem}
+.grid3{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:1rem}
+.grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:1rem}
+.demo-card{max-width:720px}
+.demo-label{font-size:.85rem;color:var(--gris);margin-bottom:.7rem}
+.way{cursor:pointer;transition:transform .15s, box-shadow .15s}
+.way:hover{transform:translateY(-3px);box-shadow:0 8px 24px rgba(22,56,107,.12)}
+.way-ico{font-size:1.6rem;display:block;margin-bottom:.5rem}
+.way h3{margin-bottom:.35rem}
+.way p{font-size:.9rem;color:var(--gris);line-height:1.5}
+
+/* Boutons */
+.btn{border:none;border-radius:10px;padding:.65rem 1.2rem;font-weight:600;font-size:.92rem;transition:filter .15s}
+.btn:hover{filter:brightness(1.07)}
+.btn:disabled{opacity:.45;cursor:not-allowed}
+.btn-gold{background:var(--or);color:var(--bleu-fonce)}
+.btn-blue{background:var(--bleu);color:#fff}
+.btn-ghost{background:transparent;border:1px solid var(--trait);color:var(--bleu)}
+.hero .btn-ghost{border-color:rgba(255,255,255,.4);color:#fff}
+.btn.small{padding:.45rem .85rem;font-size:.84rem}
+
+/* Ministères */
+.ministere{padding:0;overflow:hidden;display:flex;flex-direction:column}
+.min-band{height:8px}
+.min-body{padding:1.1rem;display:flex;flex-direction:column;gap:.4rem;flex:1}
+.min-annee{font-size:.78rem;color:var(--gris);letter-spacing:.05em;text-transform:uppercase}
+.min-body p:not(.min-annee){font-size:.92rem;color:var(--gris);line-height:1.5;flex:1}
+.min-body .btn{align-self:flex-start;margin-top:.6rem}
+
+/* Bande d'allocation (signature) */
+.alloc{margin:.7rem 0}
+.alloc-bar{display:flex;height:16px;border-radius:8px;overflow:hidden;border:1px solid var(--trait)}
+.alloc-seg{min-width:3px}
+.alloc-legend{display:flex;flex-wrap:wrap;gap:.4rem 1rem;margin-top:.5rem;font-size:.78rem;color:var(--gris)}
+.alloc-legend i{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:.3rem;vertical-align:-1px}
+
+/* Badges & pills */
+.badge{font-size:.72rem;font-weight:600;padding:.25rem .6rem;border-radius:999px;white-space:nowrap}
+.pill{font-size:.74rem;font-weight:600;padding:.25rem .6rem;border-radius:999px}
+.pill-blue{background:#DCE8F5;color:var(--bleu)}
+.pill-gold{background:#F5E9CC;color:#8A6212}
+.pill-green{background:#DDEBE2;color:var(--vert)}
+
+/* Dons */
+.tabs{display:flex;gap:.4rem;margin-bottom:1.4rem;border-bottom:2px solid var(--trait)}
+.tabs button{background:none;border:none;padding:.6rem 1rem;font-size:.95rem;font-weight:600;color:var(--gris);border-bottom:3px solid transparent;margin-bottom:-2px}
+.tabs button.on{color:var(--bleu);border-color:var(--or)}
+.filter-row{display:flex;gap:.5rem;flex-wrap:wrap;margin-bottom:1.2rem}
+.chip{border:1px solid var(--trait);background:#fff;border-radius:999px;padding:.4rem .9rem;font-size:.84rem;color:var(--encre)}
+.chip.sel{background:var(--bleu);color:#fff;border-color:var(--bleu)}
+.don-card{display:flex;flex-direction:column;gap:.45rem}
+.don-head{display:flex;justify-content:space-between;align-items:center;gap:.5rem}
+.don-type{font-size:.78rem;font-weight:600;color:var(--gris)}
+.don-cat{font-size:.78rem;color:var(--gris)}
+.don-desc{font-size:.9rem;color:var(--gris);line-height:1.5}
+.don-prix{font-family:'Fraunces',serif;font-size:1.15rem;font-weight:600;color:var(--bleu-fonce)}
+.don-actions{display:flex;gap:.5rem;flex-wrap:wrap;margin-top:.3rem}
+.empty{color:var(--gris);padding:2rem 0;text-align:center}
+
+/* Formulaire */
+.form-card{max-width:640px;margin:0 auto}
+.form-card.center{text-align:center;display:flex;flex-direction:column;gap:.8rem;align-items:center}
+.progress{display:flex;gap:.2rem;margin-bottom:1.5rem}
+.progress-step{flex:1;display:flex;flex-direction:column;align-items:center;gap:.3rem;opacity:.4}
+.progress-step.on{opacity:1}
+.progress-step .dot{width:26px;height:26px;border-radius:50%;background:var(--trait);display:grid;place-items:center;font-size:.78rem;font-weight:700;color:var(--gris)}
+.progress-step.on .dot{background:var(--or);color:var(--bleu-fonce)}
+.progress-step .lbl{font-size:.68rem;color:var(--gris);text-align:center}
+.form-card h3{margin-bottom:.9rem}
+.field{display:block;margin-bottom:.9rem}
+.field span{display:block;font-size:.82rem;font-weight:600;margin-bottom:.3rem;color:var(--bleu-fonce)}
+.hint{font-size:.85rem;color:var(--gris);margin-bottom:.9rem;line-height:1.5}
+.type-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:.7rem}
+.type-opt{border:2px solid var(--trait);border-radius:12px;background:#fff;padding:.9rem;text-align:left;display:flex;flex-direction:column;gap:.3rem}
+.type-opt span{font-size:.78rem;color:var(--gris);line-height:1.4}
+.type-opt.sel{border-color:var(--or);background:#FDF9F0}
+.amount-row{display:flex;gap:.5rem;flex-wrap:wrap}
+.alloc-row{display:flex;gap:.5rem;align-items:center;margin-bottom:.6rem}
+.alloc-row select{flex:1}
+.alloc-row input{width:80px}
+.btn-x{border:none;background:#F2EDE2;border-radius:8px;width:32px;height:32px;font-size:1rem;color:var(--rouge)}
+.alloc-actions{display:flex;justify-content:space-between;align-items:center;margin:.4rem 0 .8rem}
+.pct-total{font-size:.85rem;font-weight:700}
+.pct-total.ok{color:var(--vert)} .pct-total.ko{color:var(--rouge)}
+.recap{border:1px solid var(--trait);border-radius:10px;overflow:hidden;margin-bottom:1rem}
+.recap>div{display:flex;justify-content:space-between;gap:1rem;padding:.55rem .8rem;font-size:.9rem;border-bottom:1px solid var(--trait)}
+.recap>div:last-child{border-bottom:none}
+.recap span{color:var(--gris)}
+.recap-net{background:#FDF9F0}
+.form-nav{display:flex;justify-content:flex-end;gap:.6rem;margin-top:1.2rem}
+
+/* Annuaire */
+.search-row{display:flex;gap:.6rem;flex-wrap:wrap;margin-bottom:1.4rem;align-items:center}
+.search{flex:2;min-width:200px}
+.search-row select{flex:1;min-width:150px;width:auto}
+.check{display:flex;gap:.4rem;align-items:center;font-size:.85rem;white-space:nowrap}
+.check input{width:auto}
+.offre{display:flex;flex-direction:column;gap:.5rem}
+.offre-head{display:flex;gap:.7rem;align-items:center}
+.avatar{width:44px;height:44px;border-radius:50%;background:var(--bleu);color:#fff;display:grid;place-items:center;font-weight:700;font-size:.9rem;flex-shrink:0}
+.offre-dom{font-size:.8rem;color:var(--gris)}
+.offre-badges{display:flex;gap:.4rem;flex-wrap:wrap}
+.offre h4{font-size:1rem}
+.offre-foot{display:flex;gap:.8rem;align-items:center;flex-wrap:wrap}
+.stars{color:var(--or);font-size:.9rem}
+.stars-num{color:var(--encre);font-weight:700;margin-left:.3rem;font-size:.82rem}
+.avis{font-size:.78rem;color:var(--gris)}
+
+/* Dashboard */
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:.8rem;margin-bottom:1.2rem}
+.kpi{background:var(--papier);border:1px solid var(--trait);border-radius:12px;padding:.9rem 1rem}
+.kpi span{display:block;font-size:.76rem;color:var(--gris);margin-bottom:.3rem}
+.kpi strong{font-family:'Fraunces',serif;font-size:1.2rem;color:var(--bleu-fonce)}
+.kpi-gold{background:#FDF9F0;border-color:var(--or-clair)}
+.alert{background:#FBEFD9;color:#8A6212;border:1px solid #EBD9AE;border-radius:10px;padding:.7rem 1rem;font-size:.88rem;margin-bottom:1.2rem}
+.chart-card h3{font-size:1.05rem;margin-bottom:.9rem}
+.hbar-row{display:grid;grid-template-columns:130px 1fr 110px;gap:.6rem;align-items:center;margin-bottom:.5rem;font-size:.82rem}
+.hbar-label{color:var(--encre);font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.hbar-track{background:#F1ECE0;border-radius:6px;height:14px;overflow:hidden}
+.hbar{height:100%;border-radius:6px;min-width:2px;transition:width .4s}
+.hbar-val{text-align:right;color:var(--gris);font-variant-numeric:tabular-nums}
+.table{width:100%;border-collapse:collapse;font-size:.84rem}
+.table th{text-align:left;padding:.5rem .6rem;color:var(--gris);font-weight:600;border-bottom:2px solid var(--trait);font-size:.76rem;text-transform:uppercase;letter-spacing:.04em}
+.table td{padding:.55rem .6rem;border-bottom:1px solid var(--trait)}
+.grid2 .chart-card{margin-bottom:0}
+.section .chart-card{margin-top:1rem}
+
+/* Footer */
+.footer{background:var(--bleu-fonce);color:#8FA3C4;padding:1.6rem 1.4rem;text-align:center}
+.footer p{max-width:760px;margin:0 auto;font-size:.82rem;line-height:1.6}
+.footer strong{color:#fff}
+
+@media (max-width:640px){
+  .hbar-row{grid-template-columns:90px 1fr 90px}
+  .role span{display:none}
+  .hero{padding-top:2.2rem}
+}
+@media (prefers-reduced-motion:reduce){
+  *{transition:none!important}
+}
+`;
+
+
+const root = ReactDOM.createRoot(document.getElementById('root'));
+root.render(<App />);
+</script>
+</body>
+</html>
